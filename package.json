@@ -1,0 +1,42 @@
+{
+  "name": "mcp-openia",
+  "version": "1.0.0",
+  "description": "Local MCP server to generate and edit images with the OpenAI Images API (GPT Image), with exact crops and brand-font text overlays",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch"
+  },
+  "author": "Go Business Inc. (https://gobusinessinc.com/)",
+  "homepage": "https://github.com/Go-Business-Inc/MCP-OpenIA#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Go-Business-Inc/MCP-OpenIA.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Go-Business-Inc/MCP-OpenIA/issues"
+  },
+  "keywords": [
+    "mcp",
+    "openai",
+    "gpt-image"
+  ],
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "dotenv": "^17.4.2",
+    "openai": "^7.15.0",
+    "sharp": "^0.35.4",
+    "zod": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "typescript": "^7.0.2"
+  }
+}

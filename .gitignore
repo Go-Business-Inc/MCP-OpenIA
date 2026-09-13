@@ -1,0 +1,9 @@
+.env
+node_modules/
+dist/
+output/
+logs/
+fonts/*.ttf
+fonts/*.otf
+.DS_Store
+.cache/
