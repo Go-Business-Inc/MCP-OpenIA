@@ -79,7 +79,13 @@ claude mcp add --scope user openai-images -- node /absolute/path/to/MCP-OpenIA/d
 
 ### Claude Desktop
 
-Add this to `~/Library/Application Support/Claude/claude_desktop_config.json` and restart Claude:
+Claude Desktop keeps `claude_desktop_config.json` in memory and rewrites it while it's running, so editing the file with the app open gets silently undone. Use the included script from a terminal outside Claude Desktop (e.g. Terminal.app), then quit Claude with Cmd+Q — the script waits for the app to close, adds the entry, and reopens it:
+
+```bash
+./scripts/register-claude-desktop.sh
+```
+
+Or, with Claude Desktop fully quit, add this to `~/Library/Application Support/Claude/claude_desktop_config.json` yourself:
 
 ```json
 {
