@@ -80,12 +80,27 @@ async function listFonts(): Promise<string[]> {
  * Si no existe, lanza error: nunca se cae a otra fuente en silencio.
  */
 async function resolveFont(family: string, weight: number): Promise<string> {
+  const found = findFont(await listFonts(), family, weight);
+  if (found) return found;
+
+  // Puede que la fuente se haya agregado después de arrancar: se vuelve a leer la carpeta una vez.
+  fontIndex = null;
+  const rescanned = findFont(await listFonts(), family, weight);
+  if (rescanned) return rescanned;
+
+  throw new Error(
+    `Fuente "${family}" (peso ${weight}) no encontrada. Copia los .ttf de la familia en ${config.fontsDir} ` +
+      `(o instálala en ~/Library/Fonts) y reintenta.`
+  );
+}
+
+function findFont(files: string[], family: string, weight: number): string | undefined {
   const fam = norm(family);
   const weightNames = WEIGHT_NAMES[weight];
   let variable: string | undefined;
   let collection: string | undefined;
 
-  for (const file of await listFonts()) {
+  for (const file of files) {
     const stem = norm(basename(file, extname(file)));
     if (!stem.startsWith(fam)) continue;
     const rest = stem.slice(fam.length).replace(/^\d+pt/, ""); // Inter_18pt-Bold → "bold"
@@ -95,13 +110,7 @@ async function resolveFont(family: string, weight: number): Promise<string> {
     // Colecciones del sistema (Helvetica.ttc) traen varios pesos en un archivo.
     if (!collection && rest === "" && extname(file).toLowerCase() === ".ttc") collection = file;
   }
-  const found = variable ?? collection;
-  if (found) return found;
-
-  throw new Error(
-    `Fuente "${family}" (peso ${weight}) no encontrada. Copia los .ttf de la familia en ${config.fontsDir} ` +
-      `(o instálala en ~/Library/Fonts) y reintenta.`
-  );
+  return variable ?? collection;
 }
 
 const fontCache = new Map<string, Font>();
