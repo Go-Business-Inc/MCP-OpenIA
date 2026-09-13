@@ -71,34 +71,75 @@ To add a font later, drop its files into `fonts/` (or install it on the Mac) —
 
 Text is drawn from the font file's glyph outlines (via [fontkit](https://github.com/foliojs/fontkit)), not through the system text renderer, so the result doesn't depend on which fonts are installed. Variable fonts are supported: `fontWeight` sets the `wght` axis and `fontSize` the `opsz` axis when present.
 
+## Registering the server
+
+The server has to be registered in each Claude app that should use it. Claude Code and Claude Desktop keep **separate** configurations, so registering it in one doesn't make it available in the other.
+
 ### Claude Code
 
 ```bash
 claude mcp add --scope user openai-images -- node /absolute/path/to/MCP-OpenIA/dist/index.js
 ```
 
-### Claude Desktop
+Then restart your Claude Code session and check that the tools are listed with `/mcp`.
 
-Claude Desktop keeps `claude_desktop_config.json` in memory and rewrites it while it's running, so editing the file with the app open gets silently undone. Use the included script from a terminal outside Claude Desktop (e.g. Terminal.app), then quit Claude with Cmd+Q — the script waits for the app to close, adds the entry, and reopens it:
+### Claude Desktop (and Cowork)
 
-```bash
-./scripts/register-claude-desktop.sh
-```
+Claude Desktop reads its MCP servers from `~/Library/Application Support/Claude/claude_desktop_config.json`. Cowork sessions reach local servers through Claude Desktop's `remote-devices` bridge, so registering the server here is what makes it available in Cowork too.
 
-Or, with Claude Desktop fully quit, add this to `~/Library/Application Support/Claude/claude_desktop_config.json` yourself:
+> [!IMPORTANT]
+> **Don't edit `claude_desktop_config.json` while Claude Desktop is running.** The app keeps that file in memory and rewrites it on its own while it runs (for example, when a Cowork session connects), so an entry added with the app open is silently removed minutes later — often before you restart. The app doesn't write the file when it quits, so edits made while it's closed are safe.
 
-```json
-{
-  "mcpServers": {
-    "openai-images": {
-      "command": "/usr/local/bin/node",
-      "args": ["/absolute/path/to/MCP-OpenIA/dist/index.js"]
-    }
-  }
-}
-```
+#### Option A — registration script (recommended)
 
-Use the output of `which node` as `command` — Claude Desktop doesn't load your shell's `PATH`.
+1. Open **Terminal.app** (or iTerm). Don't use Claude Desktop's built-in terminal or ask Claude inside the app to run it: the script would be stopped when the app quits.
+2. Run:
+
+   ```bash
+   cd /absolute/path/to/MCP-OpenIA
+   ./scripts/register-claude-desktop.sh
+   ```
+
+3. Quit Claude Desktop with **Cmd+Q** (closing the window isn't enough).
+
+The script waits for the app to quit, backs up the config (`claude_desktop_config.json.bak-<timestamp>`), adds the `openai-images` entry pointing at your `node` and `dist/index.js`, and reopens Claude Desktop. If the app isn't running, it registers right away. It gives up without changing anything if the app isn't quit within 30 minutes.
+
+Optional environment variables: `NODE_BIN` (node binary to register, default: the `node` on your `PATH`), `MCP_NAME` (default `openai-images`), `TIMEOUT_SECONDS` (default `1800`).
+
+#### Option B — manual
+
+1. Quit Claude Desktop completely (**Cmd+Q**).
+2. Add the entry to `~/Library/Application Support/Claude/claude_desktop_config.json`, keeping everything else in the file:
+
+   ```json
+   {
+     "mcpServers": {
+       "openai-images": {
+         "command": "/usr/local/bin/node",
+         "args": ["/absolute/path/to/MCP-OpenIA/dist/index.js"]
+       }
+     }
+   }
+   ```
+
+   Use the output of `which node` as `command` — Claude Desktop doesn't load your shell's `PATH`, so a bare `node` may not be found.
+3. Open Claude Desktop again.
+
+#### Verify
+
+1. The entry is still in the config after the app has been open for a few minutes:
+
+   ```bash
+   grep -A3 '"openai-images"' ~/Library/Application\ Support/Claude/claude_desktop_config.json
+   ```
+
+2. The app launched the server — this log file exists and shows no startup errors:
+
+   ```bash
+   tail -n 20 ~/Library/Logs/Claude/mcp-server-openai-images.log
+   ```
+
+3. In a **new** Cowork or chat session, ask Claude to run `listar_modelos_imagen`. It should list the image models your OpenAI key can use. Sessions that were already open when the server was registered won't see it.
 
 ## Output
 
@@ -124,6 +165,19 @@ The server never reports success without a real image. Failures return `isError:
 ## Cost log
 
 Each call appends one JSON line to `logs/uso.jsonl`: model, size, quality, `n`, token usage, estimated cost in USD, duration, and output files. Prices live in [`src/costs.ts`](src/costs.ts) (checked 2026-09-13 against [OpenAI's pricing page](https://developers.openai.com/api/docs/pricing)) — update them if OpenAI changes its rates.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| Cowork / Claude Desktop says the tools don't exist | The entry isn't in `claude_desktop_config.json` (most often it was added with the app open and got overwritten). Check with the `grep` above and re-register with the script. Then open a new session. |
+| The entry disappears from the config | Claude Desktop rewrote the file while running. Register again with the app quit (Option A does this for you). |
+| Works in Claude Code but not in Claude Desktop (or vice versa) | They use separate configs — register the server in both. |
+| `mcp-server-openai-images.log` shows `node: not found` or `ENOENT` | `command` must be an absolute path to `node` (`which node`), and `args` an absolute path to `dist/index.js`. Run `npm run build` if `dist/` is missing. |
+| Tools respond with "OPENAI_API_KEY no está configurada" | Create `.env` in the project folder with your key (see Installation), then restart the app. |
+| `tipo_error: "sin_saldo"` | The OpenAI account has no credits or hit its spend limit — top up in OpenAI's billing settings. |
+| Text overlay fails with "Fuente … no encontrada" | Add the font files to `fonts/` (see [Brand fonts](#brand-fonts)). |
+| Changes to the code don't show up | Run `npm run build` and restart the Claude app (or open a new Claude Code session) so the server process is relaunched. |
 
 ## Configuration
 
