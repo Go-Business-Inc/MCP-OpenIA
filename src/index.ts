@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { config } from "./config.js";
 import { summarizeLog } from "./costs.js";
+import { installGoogleFont } from "./googleFonts.js";
 import { listImageModels, runCompose, runImageJob } from "./images.js";
 
 const server = new McpServer({ name: "openai-images", version: "1.0.0" });
@@ -146,6 +147,36 @@ server.registerTool(
     annotations: { readOnlyHint: false, openWorldHint: false },
   },
   async (args) => runCompose(args)
+);
+
+server.registerTool(
+  "instalar_fuente_google",
+  {
+    title: "Instalar fuente de Google Fonts",
+    description:
+      "Descarga e instala una familia tipográfica desde el repositorio oficial de Google Fonts para usarla en overlay_text. " +
+      "USAR SOLO cuando el usuario pida explícitamente instalar o usar una fuente concreta. Nunca la instales por iniciativa " +
+      "propia ni para cambiar la tipografía de marca (Manrope/Inter) sin que el usuario lo pida. Solo Google Fonts; las " +
+      "fuentes comerciales hay que instalarlas a mano. Después de instalarla, usa el nombre de 'familia' en fontFamily.",
+    inputSchema: {
+      familia: z.string().min(1).describe("Nombre de la familia tal como aparece en fonts.google.com, ej. 'Playfair Display'."),
+    },
+    annotations: { readOnlyHint: false, openWorldHint: true },
+  },
+  async ({ familia }) => {
+    try {
+      const r = await installGoogleFont(familia);
+      const text = r.ya_instalada
+        ? { ok: true, familia: r.familia, ya_instalada: true, archivos: r.archivos, nota: "Ya estaba instalada; no se descargó nada." }
+        : { ok: true, familia: r.familia, pesos: r.pesos, archivos: r.archivos, licencia: r.licencia, uso: `fontFamily: "${r.familia}"` };
+      return { content: [{ type: "text", text: JSON.stringify(text, null, 2) }] };
+    } catch (err) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: JSON.stringify({ ok: false, herramienta: "instalar_fuente_google", mensaje: (err as Error).message }, null, 2) }],
+      };
+    }
+  }
 );
 
 server.registerTool(

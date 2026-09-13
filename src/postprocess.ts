@@ -53,6 +53,11 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 let fontIndex: string[] | null = null;
 
+/** Fuerza a releer las carpetas de fuentes en la próxima búsqueda (ej. tras instalar una). */
+export function invalidateFontIndex(): void {
+  fontIndex = null;
+}
+
 async function listFonts(): Promise<string[]> {
   if (fontIndex) return fontIndex;
   const dirs = [

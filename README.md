@@ -19,6 +19,7 @@ It runs locally on your Mac on purpose: cloud sandboxes (such as Cowork's) block
 | `generar_imagen` | Generates an image from a text prompt | OpenAI |
 | `generar_variacion` | Generates a new image from 1–16 reference images (URL — including signed URLs —, local path, data URL, or base64), with an optional `mask` for inpainting | OpenAI |
 | `componer_imagen` | Applies `crop_to` / `overlay_text` to an existing image without regenerating it | Free |
+| `instalar_fuente_google` | Downloads a font family from the official Google Fonts repository into `fonts/` — only when the user explicitly asks for a font | Free |
 | `listar_modelos_imagen` | Lists the image models your API key can use (also a connection test) | Free |
 | `resumen_gasto` | Summarizes estimated spend per model from the local log | Free |
 
@@ -65,6 +66,8 @@ Put your key in `.env` as `OPENAI_API_KEY=...`. Never hardcode it, paste it into
 ### Brand fonts
 
 `overlay_text` looks for font files in `fonts/`, `~/Library/Fonts`, and `/Library/Fonts`. Drop the `.ttf` files of your brand typefaces into `fonts/` (see [fonts/README.md](fonts/README.md)). If a font can't be found — or lacks a character in your text — the tool returns an error instead of silently substituting another typeface, and it checks the font *before* calling OpenAI, so no money is spent.
+
+To add a font later, drop its files into `fonts/` (or install it on the Mac) — no restart needed. For Google Fonts families, the agent can also call `instalar_fuente_google` with the family name (e.g. `"Playfair Display"`): it downloads the variable (or non-italic static) `.ttf` files and the license only from the official [google/fonts](https://github.com/google/fonts) repository, validates them, and makes them available immediately. The tool is described to the agent as usable **only when the user explicitly requests a font**, so it won't swap your brand typography on its own. Commercial fonts must be installed manually.
 
 Text is drawn from the font file's glyph outlines (via [fontkit](https://github.com/foliojs/fontkit)), not through the system text renderer, so the result doesn't depend on which fonts are installed. Variable fonts are supported: `fontWeight` sets the `wght` axis and `fontSize` the `opsz` axis when present.
 

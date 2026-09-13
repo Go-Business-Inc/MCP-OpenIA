@@ -7,4 +7,4 @@ fonts/*.ttf
 fonts/*.otf
 .DS_Store
 .cache/
-fonts/OFL-*.txt
+fonts/*.txt
