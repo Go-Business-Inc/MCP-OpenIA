@@ -102,6 +102,22 @@ function describeError(err: unknown): Record<string, unknown> {
       err.code === "moderation_blocked" ||
       err.code === "content_policy_violation" ||
       /safety system|content policy|moderation/i.test(msg);
+    // OpenAI usa 429 tanto para rate limit (reintentable) como para falta de saldo (no reintentable).
+    const noCredit =
+      err.code === "insufficient_quota" ||
+      err.code === "credit_balance_exhausted" ||
+      err.type === "insufficient_quota" ||
+      err.code === "billing_hard_limit_reached";
+    if (noCredit) {
+      return {
+        tipo_error: "sin_saldo",
+        http_status: err.status ?? null,
+        codigo: err.code ?? null,
+        mensaje: msg,
+        request_id: err.requestID ?? null,
+        reintentable: "no: la cuenta de OpenAI no tiene saldo o llegó a su límite de gasto; requiere acción humana en Billing.",
+      };
+    }
     return {
       tipo_error: policy ? "politica_contenido" : "api_openai",
       http_status: err.status ?? null,

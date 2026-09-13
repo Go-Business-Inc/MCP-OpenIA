@@ -64,7 +64,9 @@ Put your key in `.env` as `OPENAI_API_KEY=...`. Never hardcode it, paste it into
 
 ### Brand fonts
 
-`overlay_text` looks for font files in `fonts/`, `~/Library/Fonts`, and `/Library/Fonts`. Drop the `.ttf` files of your brand typefaces into `fonts/` (see [fonts/README.md](fonts/README.md)). If a font can't be found, the tool returns an error instead of silently substituting another typeface — and it checks this *before* calling OpenAI, so no money is spent.
+`overlay_text` looks for font files in `fonts/`, `~/Library/Fonts`, and `/Library/Fonts`. Drop the `.ttf` files of your brand typefaces into `fonts/` (see [fonts/README.md](fonts/README.md)). If a font can't be found — or lacks a character in your text — the tool returns an error instead of silently substituting another typeface, and it checks the font *before* calling OpenAI, so no money is spent.
+
+Text is drawn from the font file's glyph outlines (via [fontkit](https://github.com/foliojs/fontkit)), not through the system text renderer, so the result doesn't depend on which fonts are installed. Variable fonts are supported: `fontWeight` sets the `wght` axis and `fontSize` the `opsz` axis when present.
 
 ### Claude Code
 
@@ -104,6 +106,7 @@ The server never reports success without a real image. Failures return `isError:
 | `tipo_error` | Meaning |
 |---|---|
 | `politica_contenido` | OpenAI's safety system rejected the prompt (`codigo`, `mensaje`, `request_id` included). Retry with an adjusted prompt. |
+| `sin_saldo` | The OpenAI account is out of credits or hit its spend limit. Not retryable — needs a human to top up billing. |
 | `api_openai` | Any other API error (HTTP status, code, offending parameter) |
 | `validacion` | Invalid parameters caught locally before calling OpenAI — nothing was spent |
 | `postproceso` | The image was generated (and billed) but cropping/text failed. `imagenes_originales` holds the saved original so you can fix it with `componer_imagen` without paying again. |

@@ -2,6 +2,8 @@ import { readdir } from "fs/promises";
 import { homedir } from "os";
 import { basename, extname, join } from "path";
 import sharp, { type OverlayOptions } from "sharp";
+import * as fontkit from "fontkit";
+import type { Font } from "fontkit";
 import { config } from "./config.js";
 
 export type OutputFormat = "png" | "jpeg" | "webp";
@@ -81,15 +83,20 @@ async function resolveFont(family: string, weight: number): Promise<string> {
   const fam = norm(family);
   const weightNames = WEIGHT_NAMES[weight];
   let variable: string | undefined;
+  let collection: string | undefined;
 
   for (const file of await listFonts()) {
     const stem = norm(basename(file, extname(file)));
     if (!stem.startsWith(fam)) continue;
     const rest = stem.slice(fam.length).replace(/^\d+pt/, ""); // Inter_18pt-Bold → "bold"
     if (weightNames.includes(rest)) return file;
-    if (!variable && (rest.startsWith("variablefont") || rest.startsWith("wght") || rest === "")) variable = file;
+    // Variables: Manrope[wght].ttf, Inter[opsz,wght].ttf, Manrope-VariableFont_wght.ttf
+    if (!variable && /^(variablefont)?(opsz|wght|ital|wdth|slnt)*$/.test(rest)) variable = file;
+    // Colecciones del sistema (Helvetica.ttc) traen varios pesos en un archivo.
+    if (!collection && rest === "" && extname(file).toLowerCase() === ".ttc") collection = file;
   }
-  if (variable) return variable;
+  const found = variable ?? collection;
+  if (found) return found;
 
   throw new Error(
     `Fuente "${family}" (peso ${weight}) no encontrada. Copia los .ttf de la familia en ${config.fontsDir} ` +
@@ -97,9 +104,44 @@ async function resolveFont(family: string, weight: number): Promise<string> {
   );
 }
 
+const fontCache = new Map<string, Font>();
+
+/** Abre la fuente con fontkit y fija el peso (y el tamaño óptico, si la fuente variable lo tiene). */
+async function loadFont(family: string, weight: number, fontSize: number): Promise<Font> {
+  const file = await resolveFont(family, weight);
+  const key = `${file}|${weight}|${Math.round(fontSize)}`;
+  const cached = fontCache.get(key);
+  if (cached) return cached;
+
+  const opened = fontkit.openSync(file);
+  let font: Font;
+  if ("fonts" in opened) {
+    const fam = norm(family);
+    const members = opened.fonts.filter((f) => norm(f.familyName) === fam);
+    const names = WEIGHT_NAMES[weight];
+    font =
+      members.find((f) => names.includes(norm(f.subfamilyName))) ??
+      members.find((f) => ["regular", "roman"].includes(norm(f.subfamilyName))) ??
+      members[0] ??
+      opened.fonts[0];
+  } else {
+    font = opened;
+  }
+
+  const axes = font.variationAxes ?? {};
+  const settings: Record<string, number> = {};
+  const clamp = (v: number, a: { min: number; max: number }) => Math.min(a.max, Math.max(a.min, v));
+  if (axes.wght) settings.wght = clamp(weight, axes.wght);
+  if (axes.opsz) settings.opsz = clamp(fontSize, axes.opsz);
+  if (Object.keys(settings).length) font = font.getVariation(settings);
+
+  fontCache.set(key, font);
+  return font;
+}
+
 /** Verifica que existan todas las fuentes antes de gastar una llamada a OpenAI. */
 export async function assertFonts(overlays: TextOverlay[] | undefined): Promise<void> {
-  for (const o of overlays ?? []) await resolveFont(o.fontFamily, normalizeWeight(o.fontWeight));
+  for (const o of overlays ?? []) await loadFont(o.fontFamily, normalizeWeight(o.fontWeight), o.fontSize);
 }
 
 // ─── Operaciones ──────────────────────────────────────────────────────────────
@@ -111,31 +153,78 @@ export async function cropTo(buffer: Buffer, crop: CropTo): Promise<Buffer> {
     .toBuffer();
 }
 
-const escapeMarkup = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+/** Corta el texto en líneas que quepan en maxWidth (por palabras). Respeta los \n explícitos. */
+function wrapLines(font: Font, text: string, scale: number, maxWidth?: number): string[] {
+  const lines: string[] = [];
+  for (const paragraph of text.split("\n")) {
+    if (!maxWidth) {
+      lines.push(paragraph);
+      continue;
+    }
+    let current = "";
+    for (const word of paragraph.split(/ +/)) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (current && font.layout(candidate).advanceWidth * scale > maxWidth) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
+    }
+    lines.push(current);
+  }
+  return lines;
+}
 
+/**
+ * Dibuja el texto convirtiendo cada glifo del archivo de fuente en un contorno vectorial (fontkit → SVG).
+ * No depende de las fuentes instaladas en el sistema: el render de texto de sharp en macOS usa CoreText
+ * e ignora el archivo indicado, cayendo en silencio a Helvetica.
+ */
 async function renderText(o: TextOverlay): Promise<{ png: Buffer; width: number; height: number }> {
-  const weight = normalizeWeight(o.fontWeight);
-  const fontfile = await resolveFont(o.fontFamily, weight);
-  const markup =
-    `<span foreground="${escapeMarkup(o.color)}" font_weight="${weight}">` + escapeMarkup(o.text) + `</span>`;
+  if (!/^(#[0-9a-f]{3,8}|[a-z]+)$/i.test(o.color)) throw new Error(`color "${o.color}" inválido. Usa hex (#FF7200) o un nombre CSS.`);
 
-  // dpi 72 → 1pt = 1px, así fontSize se interpreta en píxeles.
-  const img = sharp({
-    text: {
-      text: markup,
-      font: `${o.fontFamily} ${o.fontSize}`,
-      fontfile,
-      rgba: true,
-      dpi: 72,
-      width: o.maxWidth,
-      align: o.align === "center" ? "centre" : (o.align ?? "left"),
-      wrap: "word",
-    },
+  const weight = normalizeWeight(o.fontWeight);
+  const font = await loadFont(o.fontFamily, weight, o.fontSize);
+  const scale = o.fontSize / font.unitsPerEm;
+
+  const missing = [...new Set([...o.text.replace(/\s/g, "")].filter((ch) => !font.hasGlyphForCodePoint(ch.codePointAt(0)!)))];
+  if (missing.length) {
+    throw new Error(`La fuente ${o.fontFamily} no tiene estos caracteres: ${missing.join(" ")}. Quítalos o usa otra fuente.`);
+  }
+
+  const ascent = font.ascent * scale;
+  const lineHeight = (font.ascent - font.descent + font.lineGap) * scale;
+  const lines = wrapLines(font, o.text, scale, o.maxWidth).map((text) => {
+    const run = font.layout(text);
+    return { run, width: run.advanceWidth * scale };
   });
-  const png = await img.png().toBuffer();
-  const meta = await sharp(png).metadata();
-  return { png, width: meta.width ?? 0, height: meta.height ?? 0 };
+  const boxWidth = o.maxWidth ?? Math.max(...lines.map((l) => l.width));
+
+  const paths: string[] = [];
+  for (const [i, { run, width }] of lines.entries()) {
+    const x0 = o.align === "center" ? (boxWidth - width) / 2 : o.align === "right" ? boxWidth - width : 0;
+    const baseline = ascent + i * lineHeight;
+    let cursor = 0;
+    for (const [j, glyph] of run.glyphs.entries()) {
+      const pos = run.positions[j];
+      const d = glyph.path.toSVG();
+      if (d) {
+        const gx = x0 + (cursor + pos.xOffset) * scale;
+        const gy = baseline - pos.yOffset * scale;
+        paths.push(`<path transform="translate(${gx.toFixed(2)} ${gy.toFixed(2)}) scale(${scale} ${-scale})" d="${d}"/>`);
+      }
+      cursor += pos.xAdvance;
+    }
+  }
+
+  const width = Math.ceil(boxWidth);
+  const height = Math.ceil(lines.length * lineHeight);
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+    `<g fill="${o.color}">${paths.join("")}</g></svg>`;
+  const png = await sharp(Buffer.from(svg)).png().toBuffer();
+  return { png, width, height };
 }
 
 export async function overlayText(buffer: Buffer, overlays: TextOverlay[]): Promise<Buffer> {
@@ -145,13 +234,9 @@ export async function overlayText(buffer: Buffer, overlays: TextOverlay[]): Prom
 
   for (const [i, o] of overlays.entries()) {
     const { png, width, height } = await renderText(o);
-    // Con maxWidth + align, alineamos el bloque dentro de la caja [x, x+maxWidth].
-    let left = o.x;
-    if (o.maxWidth && o.align === "center") left = o.x + Math.round((o.maxWidth - width) / 2);
-    if (o.maxWidth && o.align === "right") left = o.x + (o.maxWidth - width);
+    const left = o.x;
     const top = o.y;
-
-    if (left < 0 || top < 0 || left + width > W || top + height > H) {
+    if (left + width > W || top + height > H) {
       throw new Error(
         `overlay_text[${i}] ("${o.text.slice(0, 40)}") se sale de la imagen: el bloque mide ${width}x${height}px ` +
           `en (${left}, ${top}) y la imagen es ${W}x${H}px. Reduce fontSize, usa maxWidth o ajusta x/y.`
